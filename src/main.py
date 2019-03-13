@@ -6,7 +6,7 @@ import xgboost as xgb
 import pickle
 import os
 from imblearn.over_sampling import SMOTE
-from sklearn.metrics import roc_curve, classification_report, accuracy_score, auc
+from sklearn.metrics import roc_auc_score, classification_report, accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from datetime import datetime
@@ -63,8 +63,8 @@ def scaling(data):
     return data
 
 
-def build_xgb_model():
-    xgb_clf = xgb.XGBClassifier(n_estimators=100,
+def build_xgb_model(xgtrain):
+    xgb_clf = xgb.XGBClassifier(n_estimators=200,
                                 learning_rate=0.1,
                                 max_depth=5,
                                 min_child_weight=1,
@@ -74,17 +74,22 @@ def build_xgb_model():
                                 scale_pos_weight=1,
                                 objective='binary:logistic',
                                 # nthread=8,
-                                silent=False
+                                # silent=False
                                 )
-    return xgb_clf
+    xgb_param = xgb_clf.get_xgb_params()
+    print('Start cross validation')
+    cvresult = xgb.cv(xgb_param, xgtrain, num_boost_round=xgb_param['n_estimators'], nfold=5, metrics=['auc'],
+                      early_stopping_rounds=50, stratified=True, seed=0)
+    print('Best number of trees = {}'.format(cvresult.shape[0]))
+    xgb_clf.set_params(n_estimators=cvresult.shape[0])
+    return xgb_clf, cvresult.shape[0]
 
 
 # return two score
 def model_score(y_true, y_pred):
     acc_score = accuracy_score(y_true, y_pred)
     class_report = classification_report(y_true, y_pred)
-    fpr, tpr, thresholds = roc_curve(y_true, y_pred)
-    auc_score = auc(fpr, tpr)
+    auc_score = roc_auc_score(y_true, y_pred)
     print('accuracy score: ' + str(acc_score))
     print('auc score', auc_score)
     print('classification report', class_report)
@@ -100,8 +105,8 @@ if __name__ == '__main__':
     with multiprocessing.Pool() as pool:
         df_train, df_test = pool.map(load_file, ["train", "test"])
 
-    df_train = df_train.sample(2000)
-    df_test = df_test.sample(2000)
+    # df_train = df_train.sample(2000)
+    # df_test = df_test.sample(2000)
     print(df_train.info())
     print(df_test.info())
 
@@ -130,15 +135,14 @@ if __name__ == '__main__':
     # training model and save
     #
 
-    clf = build_xgb_model()
+    clf, ntree_limit = build_xgb_model(xgb.DMatrix(x_train, y_train))
     clf.fit(x_train, y_train)
-    # pickle.dump(clf, open(MODEL_DIR_PATH + 'model.sav', 'wb'))
 
     #
     # print predict and score
     #
 
-    y_valid_pred = clf.predict(x_valid)
+    y_valid_pred = clf.predict(x_valid, ntree_limit=ntree_limit)
     acc_score, class_report, auc_score = model_score(y_valid_pred, y_valid)
 
     #
@@ -152,7 +156,7 @@ if __name__ == '__main__':
     # test to predict and submit dataframe
     #
 
-    y_test_pred = clf.predict(x_test)
+    y_test_pred = clf.predict(x_test, ntree_limit=ntree_limit)
     df_test_pred = pd.Series(y_test_pred, index=df_test[ID], name=TARGET)
     print(df_test_pred.head())
     print(df_test_pred.value_counts())
