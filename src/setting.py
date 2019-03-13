@@ -1,4 +1,4 @@
-DTYPES = dict(ID_code="object", target="object", var_0="float64", var_1="float64", var_2="float64", var_3="float64",
+DTYPES = dict(ID_code="object", target="int16", var_0="float64", var_1="float64", var_2="float64", var_3="float64",
               var_4="float64", var_5="float64", var_6="float64", var_7="float64", var_8="float64", var_9="float64",
               var_10="float64", var_11="float64", var_12="float64", var_13="float64", var_14="float64",
               var_15="float64", var_16="float64", var_17="float64", var_18="float64", var_19="float64",

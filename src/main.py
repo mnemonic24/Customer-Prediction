@@ -6,7 +6,7 @@ import xgboost as xgb
 import pickle
 import os
 from imblearn.over_sampling import SMOTE
-from sklearn.metrics import roc_curve, classification_report, accuracy_score
+from sklearn.metrics import roc_curve, classification_report, accuracy_score, auc
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from datetime import datetime
@@ -38,9 +38,9 @@ def load_file(dataset):
 def output_profile(df, filename):
     filepath = PROFILE_DIR_PATH + filename
     if check_filepath(filepath):
-        print(f'already exist file path {filepath}')
+        print(f'already exist file path <{filepath}>')
     else:
-        print('create profiling report')
+        print(f'create profiling report <{filepath}>')
         profile = pdp.ProfileReport(df)
         profile.to_file(filepath)
 
@@ -81,12 +81,15 @@ def build_xgb_model():
 
 # return two score
 def model_score(y_true, y_pred):
-    acc_score = str(accuracy_score(y_true, y_pred))
-    class_report = str(classification_report(y_true, y_pred))
-    print('accuracy score: ' + acc_score)
+    acc_score = accuracy_score(y_true, y_pred)
+    class_report = classification_report(y_true, y_pred)
+    fpr, tpr, thresholds = roc_curve(y_true, y_pred)
+    auc_score = auc(fpr, tpr)
+    print('accuracy score: ' + str(acc_score))
+    print('auc score', auc_score)
     print('classification report', class_report)
 
-    return class_report, acc_score
+    return acc_score, class_report, auc_score
 
 
 if __name__ == '__main__':
@@ -97,13 +100,15 @@ if __name__ == '__main__':
     with multiprocessing.Pool() as pool:
         df_train, df_test = pool.map(load_file, ["train", "test"])
 
-    # df_train = df_train.sample(2000)
-    # df_test = df_test.sample(2000)
+    df_train = df_train.sample(2000)
+    df_test = df_test.sample(2000)
     print(df_train.info())
     print(df_test.info())
 
     output_profile(df_train, 'train.html')
     output_profile(df_test, 'test.html')
+    output_profile(df_train[df_train[TARGET] == 0], 'train_0.html')
+    output_profile(df_train[df_train[TARGET] == 1], 'train_1.html')
 
     features = [c for c in df_train.columns if c not in [ID, TARGET]]
 
@@ -127,14 +132,14 @@ if __name__ == '__main__':
 
     clf = build_xgb_model()
     clf.fit(x_train, y_train)
-    pickle.dump(clf, open(MODEL_DIR_PATH + 'model.sav', 'wb'))
+    # pickle.dump(clf, open(MODEL_DIR_PATH + 'model.sav', 'wb'))
 
     #
     # print predict and score
     #
 
     y_valid_pred = clf.predict(x_valid)
-    acc_score, class_report = model_score(y_valid_pred, y_valid)
+    acc_score, class_report, auc_score = model_score(y_valid_pred, y_valid)
 
     #
     # print importance features
@@ -151,5 +156,5 @@ if __name__ == '__main__':
     df_test_pred = pd.Series(y_test_pred, index=df_test[ID], name=TARGET)
     print(df_test_pred.head())
     print(df_test_pred.value_counts())
-
-    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{acc_score}.csv', header=True)
+    str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
+    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(auc_score * 100, 0)}.csv', header=True)
