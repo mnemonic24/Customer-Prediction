@@ -20,7 +20,7 @@ MODEL_DIR_PATH = '../model/'
 ID = 'ID_code'
 TARGET = 'target'
 dtypes = setting.DTYPES
-NUM_ROUND = 1000
+NUM_ROUND = 100
 N_FOLD = 10
 
 
@@ -61,6 +61,7 @@ def smote_sampling(X, y):
     return X_resample, y_resample
 
 
+# oversampling (label_0 * 2, label_1 * 3)
 def my_oversampling(data):
     print(data.shape)
     print(data[TARGET].value_counts())
@@ -79,6 +80,7 @@ def scaling(data):
     return data
 
 
+# XGBoost
 def build_xgb_model(xgtrain):
     xgb_clf = xgb.XGBClassifier(n_estimators=200,
                                 learning_rate=0.1,
@@ -101,9 +103,11 @@ def build_xgb_model(xgtrain):
     return xgb_clf, cvresult.shape[0]
 
 
+# LightGBM and K-Fold
+# training model and plot predictions
 def build_lgb_model(train, test):
     folds = StratifiedKFold(n_splits=N_FOLD, shuffle=False, random_state=0)
-    preds = np.zeros(test.shape[0])
+    predictions = np.zeros(test.shape[0])
     oof = np.zeros(train.shape[0])
 
     for fold_idx, (train_idx, valid_idx) in enumerate(folds.split(train[features], train[TARGET])):
@@ -134,17 +138,15 @@ def build_lgb_model(train, test):
                         valid_sets=[lgb_train, lgb_valid],
                         valid_names=['tarin', 'valid'],
                         num_boost_round=NUM_ROUND,
-                        verbose_eval=100,
+                        verbose_eval=10,
                         early_stopping_rounds=50)
         oof[valid_idx] = clf.predict(train.iloc[valid_idx][features], num_iteration=clf.best_iteration)
-        preds += clf.predict(test[features], num_iteration=clf.best_iteration) / folds.n_splits
+        predictions += clf.predict(test[features], num_iteration=clf.best_iteration) / folds.n_splits
     oof_score = roc_auc_score(train[TARGET], oof)
-    print(oof)
-    # acc_score, class_report, auc_score = model_score(train[TARGET], oof)
-    return preds, oof_score
+    return predictions, oof_score
 
 
-# return two score
+# return scores (Accuracy, ClassificationReport, AUC)
 def model_score(y_true, y_pred):
     acc_score = accuracy_score(y_true, y_pred)
     class_report = classification_report(y_true, y_pred)
@@ -190,32 +192,13 @@ if __name__ == '__main__':
     # training model and save
     #
 
-    y_pred, total_score = build_lgb_model(df_train, df_test)
-
-    #
-    # print predict and score
-    #
-
-    # y_valid_pred = clf.predict(x_valid, num_iteration=clf.best_iteration)
-    # print(y_valid_pred)
-    # acc_score, class_report, auc_score = model_score(y_valid_pred, y_valid)
-    # print(lgb_clf.best_score['valid_0']['auc'])
-
-    #
-    # print importance features
-    #
-
-    # df_feat_imp = pd.Series(lgb_clf.feature_importance(), index=features)
-    # print(df_feat_imp.sort_values(ascending=False))
+    lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
 
     #
     # test to predict and submit dataframe
     #
 
-    # y_proba = lgb_clf.predict(x_test)
-    # y_pred = np.where(y_pred > 0.5, 1, 0)
-    # y_pred = np.argmax(y_pred, axis=1)
-    df_test_pred = pd.Series(y_pred, index=df_test[ID], name=TARGET)
+    df_test_pred = pd.Series(lgb_pred, index=df_test[ID], name=TARGET)
     str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
-    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(total_score * 100, 2)}.csv',
+    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(lgb_score * 100, 2)}.csv',
                         header=True)
