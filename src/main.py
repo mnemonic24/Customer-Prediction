@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from keras.models import Sequential
 from keras.layers import Dense, Activation, Dropout
+from keras.callbacks import EarlyStopping
 from datetime import datetime
 
 DATA_DIR_PATH = '../data/'
@@ -150,6 +151,8 @@ def build_lgb_model(train, test):
 
 # Keras
 def build_nn_model(train, test):
+    early_stopping = EarlyStopping(monitor='val_loss', patience=0, verbose=0, mode='auto')
+    train, valid = train_test_split(train, test_size=0.1)
     model = Sequential()
     model.add(Dense(1000, input_shape=(200, )))
     model.add(Activation("relu"))
@@ -157,14 +160,21 @@ def build_nn_model(train, test):
     model.add(Dense(64))
     model.add(Activation("relu"))
     model.add(Dense(1, activation='sigmoid'))
-    model.compile(loss='binary_crossentropy', optimizer='sgd', metrics=['accuracy'])
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
     model.fit(train[features], train[TARGET],
               epochs=5,
               batch_size=32,
-              validation_split=0.1,
-              verbose=1)
+              validation_data=(valid[features], valid[TARGET]),
+              verbose=1,
+              class_weight='balanced',
+              callbacks=[early_stopping])
+    score = model.evaluate(valid[features], valid[TARGET], batch_size=32, verbose=0)
+    print('loss: ', score[0])
+    print('accuracy: ', score[1])
     predict = model.predict(test[features])
-    return predict
+
+    # because predict is (n, 1) shape
+    return predict.T[0], score[1]
 
 
 # return scores (Accuracy, ClassificationReport, AUC)
@@ -187,8 +197,8 @@ if __name__ == '__main__':
     with multiprocessing.Pool() as pool:
         df_train, df_test = pool.map(load_file, ["train", "test"])
 
-    # df_train = df_train.sample(5000)
-    # df_test = df_test.sample(5000)
+    # df_train = df_train.sample(2000)
+    # df_test = df_test.sample(2000)
     print(df_train.info())
     print(df_test.info())
 
@@ -206,22 +216,22 @@ if __name__ == '__main__':
     df_train = my_oversampling(df_train)
     # df_train[features], df_train[TARGET] = smote_sampling(df_train[features], df_train[TARGET])
 
-    # df_train[features] = scaling(df_train[features])
-    # df_test[features] = scaling(df_test[features])
+    df_train[features] = scaling(df_train[features])
+    df_test[features] = scaling(df_test[features])
 
     #
     # training model and save
     #
 
     # lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
-    nn_pred = build_nn_model(df_train, df_test)
-    print(nn_pred)
+    nn_pred, nn_score = build_nn_model(df_train, df_test)
+    print(nn_pred.T[0])
 
     #
     # test to predict and submit dataframe
     #
 
-    # df_test_pred = pd.Series(lgb_pred, index=df_test[ID], name=TARGET)
-    # str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
-    # df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(lgb_score * 100, 2)}.csv',
-    #                     header=True)
+    df_test_pred = pd.Series(nn_pred.T[0], index=df_test[ID], name=TARGET)
+    str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
+    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(nn_score * 100, 2)}.csv',
+                        header=True)
