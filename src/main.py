@@ -11,6 +11,8 @@ from imblearn.over_sampling import SMOTE
 from sklearn.metrics import roc_auc_score, classification_report, accuracy_score
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Dropout
 from datetime import datetime
 
 DATA_DIR_PATH = '../data/'
@@ -146,6 +148,25 @@ def build_lgb_model(train, test):
     return predictions, oof_score
 
 
+# Keras
+def build_nn_model(train, test):
+    model = Sequential()
+    model.add(Dense(1000, input_shape=(200, )))
+    model.add(Activation("relu"))
+    model.add(Dropout(0.5))
+    model.add(Dense(64))
+    model.add(Activation("relu"))
+    model.add(Dense(1, activation='sigmoid'))
+    model.compile(loss='binary_crossentropy', optimizer='sgd', metrics=['accuracy'])
+    model.fit(train[features], train[TARGET],
+              epochs=5,
+              batch_size=32,
+              validation_split=0.1,
+              verbose=1)
+    predict = model.predict(test[features])
+    return predict
+
+
 # return scores (Accuracy, ClassificationReport, AUC)
 def model_score(y_true, y_pred):
     acc_score = accuracy_score(y_true, y_pred)
@@ -192,13 +213,15 @@ if __name__ == '__main__':
     # training model and save
     #
 
-    lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
+    # lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
+    nn_pred = build_nn_model(df_train, df_test)
+    print(nn_pred)
 
     #
     # test to predict and submit dataframe
     #
 
-    df_test_pred = pd.Series(lgb_pred, index=df_test[ID], name=TARGET)
-    str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
-    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(lgb_score * 100, 2)}.csv',
-                        header=True)
+    # df_test_pred = pd.Series(lgb_pred, index=df_test[ID], name=TARGET)
+    # str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
+    # df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(lgb_score * 100, 2)}.csv',
+    #                     header=True)
