@@ -61,6 +61,7 @@ def smote_sampling(X, y):
 
 def my_oversampling(data):
     print(data.shape)
+    print(data[TARGET].value_counts())
     positive_data = data[data[TARGET] == 1]
     negative_data = data[data[TARGET] == 0]
     data = pd.concat([data, positive_data.sample(frac=1)], axis=0)
@@ -98,30 +99,58 @@ def build_xgb_model(xgtrain):
     return xgb_clf, cvresult.shape[0]
 
 
-def build_lgb_model(train, valid):
-    model = lgb.LGBMClassifier(boosting_type='gbdt',
-                               num_leaves=13,
-                               max_depth=-1,
-                               learning_rate=0.01,
-                               n_estimators=200,
-                               subsample_for_bin=2000000,
-                               objective='binary',
-                               class_weight='balanced',
-                               min_split_gain=0,
-                               min_child_samples=20,
-                               subsample=1,
-                               subsample_freq=0,
-                               colsample_bytree=1,
-                               reg_alpha=0,
-                               reg_lambda=0,
-                               random_state=0,
-                               n_jobs=-1,
-                               silent=True,
-                               importance_type='split',
-                               metric='auc')
-    params = model.get_params()
-    clf = lgb.train(params=params, train_set=train, valid_sets=valid, num_boost_round=100, verbose_eval=5)
-    return clf
+def build_lgb_model(train, test):
+    folds = StratifiedKFold(n_splits=10, shuffle=False, random_state=0)
+    preds = np.zeros(test.shape[0])
+    oof = np.zeros(train.shape[0])
+
+    for fold_idx, (train_idx, valid_idx) in enumerate(folds.split(train[features], train[TARGET])):
+        print('fold: ', fold_idx)
+        lgb_train = lgb.Dataset(train.iloc[train_idx][features], label=train.iloc[train_idx][TARGET])
+        lgb_valid = lgb.Dataset(train.iloc[valid_idx][features], label=train.iloc[valid_idx][TARGET], reference=lgb_train)
+        # model = lgb.LGBMClassifier(boosting_type='gbdt',
+        #                            num_leaves=13,
+        #                            max_depth=-1,
+        #                            learning_rate=0.01,
+        #                            n_estimators=200,
+        #                            subsample_for_bin=2000000,
+        #                            objective='binary',
+        #                            class_weight='balanced',
+        #                            min_split_gain=0,
+        #                            min_child_samples=20,
+        #                            subsample=1,
+        #                            subsample_freq=0,
+        #                            colsample_bytree=1,
+        #                            reg_alpha=0,
+        #                            reg_lambda=0,
+        #                            random_state=0,
+        #                            n_jobs=-1,
+        #                            silent=True,
+        #                            importance_type='split',
+        #                            metric='auc')
+        # params = model.get_params()
+        params = {
+            'bagging_freq': 5,
+            'bagging_fraction': 0.4,
+            'boost_from_average': 'false',
+            'boost': 'gbdt',
+            'feature_fraction': 0.05,
+            'learning_rate': 0.01,
+            'max_depth': -1,
+            'metric':'auc',
+            'min_data_in_leaf': 80,
+            'min_sum_hessian_in_leaf': 10.0,
+            'num_leaves': 13,
+            'num_threads': 8,
+            'tree_learner': 'serial',
+            'objective': 'binary',
+            'verbosity': 1
+        }
+        clf = lgb.train(params=params, train_set=lgb_train, valid_sets=lgb_valid, num_boost_round=100, verbose_eval=1000, early_stopping_rounds=500)
+        oof[valid_idx] = clf.predict(train.iloc[valid_idx][features], num_iteration=clf.best_iteration)
+        preds += clf.predict(test[features], num_iteration=clf.best_iteration) / folds.n_splits
+    oof_score = roc_auc_score(train[TARGET], oof)
+    return preds, oof_score
 
 
 # return two score
@@ -161,25 +190,26 @@ if __name__ == '__main__':
     #
     df_train = my_oversampling(df_train)
 
-    x_train = df_train[features]
-    y_train = df_train[TARGET]
+    # x_train = df_train[features]
+    # y_train = df_train[TARGET]
 
     # x_train, y_train = smote_sampling(x_train, y_train)
 
-    x_train = scaling(x_train)
-    x_test = scaling(df_test[features])
+    # df_train[features] = scaling(df_train[features])
+    # df_test[features] = scaling(df_test[features])
 
-    x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.2,
-                                                          random_state=0)
+    # x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.2,
+    #                                                       random_state=0)
 
     #
     # training model and save
     #
 
     # clf, ntree_limit = build_xgb_model(xgb.DMatrix(x_train, y_train))
-    lgb_train = lgb.Dataset(x_train, y_train)
-    lgb_valid = lgb.Dataset(x_valid, y_valid, reference=lgb_train)
-    lgb_clf = build_lgb_model(lgb_train, lgb_valid)
+    # lgb_clf = build_lgb_model(x_train, y_train)
+
+    y_proba, total_score = build_lgb_model(df_train, df_test)
+    print(y_proba)
 
     #
     # print predict and score
@@ -188,24 +218,24 @@ if __name__ == '__main__':
     # y_valid_pred = clf.predict(x_valid, num_iteration=clf.best_iteration)
     # print(y_valid_pred)
     # acc_score, class_report, auc_score = model_score(y_valid_pred, y_valid)
-    print(lgb_clf.best_score['valid_0']['auc'])
+    # print(lgb_clf.best_score['valid_0']['auc'])
 
     #
     # print importance features
     #
 
-    df_feat_imp = pd.Series(lgb_clf.feature_importance(), index=features)
-    print(df_feat_imp.sort_values(ascending=False))
+    # df_feat_imp = pd.Series(lgb_clf.feature_importance(), index=features)
+    # print(df_feat_imp.sort_values(ascending=False))
 
     #
     # test to predict and submit dataframe
     #
 
-    y_proba = lgb_clf.predict(x_test)
-    y_pred = np.where(y_proba > 0.3, 1, 0)
+    # y_proba = lgb_clf.predict(x_test)
+    y_pred = np.where(y_proba > 0.5, 1, 0)
     df_test_pred = pd.Series(y_pred, index=df_test[ID], name=TARGET)
     print(df_test_pred.head())
     print(df_test_pred.value_counts())
     str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
-    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(lgb_clf.best_score["valid_0"]["auc"] * 100, 2)}.csv',
+    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(total_score * 100, 2)}.csv',
                         header=True)
