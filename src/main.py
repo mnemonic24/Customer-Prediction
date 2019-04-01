@@ -2,6 +2,7 @@ import pandas as pd
 import pandas_profiling as pdp
 import multiprocessing
 import setting
+import metric
 import xgboost as xgb
 import lightgbm as lgb
 import numpy as np
@@ -160,7 +161,7 @@ def build_nn_model(train, test):
     model.add(Dense(64))
     model.add(Activation("relu"))
     model.add(Dense(1, activation='sigmoid'))
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[metric.auc_roc])
     model.fit(train[features], train[TARGET],
               epochs=5,
               batch_size=32,
@@ -225,13 +226,13 @@ if __name__ == '__main__':
 
     # lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
     nn_pred, nn_score = build_nn_model(df_train, df_test)
-    print(nn_pred.T[0])
+    print(nn_pred)
 
     #
     # test to predict and submit dataframe
     #
 
-    df_test_pred = pd.Series(nn_pred.T[0], index=df_test[ID], name=TARGET)
+    df_test_pred = pd.Series(nn_pred, index=df_test[ID], name=TARGET)
     str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
     df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(nn_score * 100, 2)}.csv',
                         header=True)
