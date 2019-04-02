@@ -69,8 +69,8 @@ def smote_sampling(X, y):
 def my_oversampling(data):
     print(data.shape)
     print(data[TARGET].value_counts())
-    positive_data = data[data[TARGET] == '1']
-    negative_data = data[data[TARGET] == '0']
+    positive_data = data[data[TARGET] == 1]
+    negative_data = data[data[TARGET] == 0]
     data = pd.concat([data, positive_data.sample(frac=1)], axis=0)
     data = pd.concat([data, positive_data.sample(frac=1)], axis=0)
     data = pd.concat([data, negative_data.sample(frac=1)], axis=0)
