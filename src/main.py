@@ -24,7 +24,7 @@ MODEL_DIR_PATH = '../model/'
 ID = 'ID_code'
 TARGET = 'target'
 dtypes = setting.DTYPES
-NUM_ROUND = 100
+NUM_ROUND = 1000
 N_FOLD = 10
 
 
@@ -152,7 +152,7 @@ def build_lgb_model(train, test):
 
 # Keras
 def build_nn_model(train, test):
-    early_stopping = EarlyStopping(monitor='val_loss', patience=0, verbose=0, mode='auto')
+    early_stopping = EarlyStopping(monitor='val_loss', patience=1, verbose=0, mode='auto')
     train, valid = train_test_split(train, test_size=0.1)
     model = Sequential()
     model.add(Dense(1000, input_shape=(200, )))
@@ -169,7 +169,7 @@ def build_nn_model(train, test):
               verbose=1,
               class_weight='balanced',
               callbacks=[early_stopping])
-    score = model.evaluate(valid[features], valid[TARGET], batch_size=32, verbose=0)
+    score = model.evaluate(valid[features], valid[TARGET], batch_size=64, verbose=0)
     print('loss: ', score[0])
     print('accuracy: ', score[1])
     predict = model.predict(test[features])
@@ -224,15 +224,22 @@ if __name__ == '__main__':
     # training model and save
     #
 
-    # lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
+    lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
+    print(lgb_pred)
     nn_pred, nn_score = build_nn_model(df_train, df_test)
     print(nn_pred)
+
+    #
+    # merge predict data
+    #
+
+    ensemble_pred = (lgb_pred + nn_pred) / 2
 
     #
     # test to predict and submit dataframe
     #
 
-    df_test_pred = pd.Series(nn_pred, index=df_test[ID], name=TARGET)
+    df_test_pred = pd.Series(ensemble_pred, index=df_test[ID], name=TARGET)
     str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
     df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(nn_score * 100, 2)}.csv',
                         header=True)
