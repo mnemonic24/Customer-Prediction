@@ -24,7 +24,7 @@ MODEL_DIR_PATH = '../model/'
 ID = 'ID_code'
 TARGET = 'target'
 dtypes = setting.DTYPES
-NUM_ROUND = 1000
+NUM_ROUND = 100000
 N_FOLD = 10
 
 
@@ -123,7 +123,7 @@ def build_lgb_model(train, test):
             'objective': 'binary',
             'bagging_freq': 5,
             'bagging_fraction': 0.4,
-            'boost_from_average': 'False',
+            'boost_from_average': 'false',
             'boost': 'gbdt',
             'feature_fraction': 0.05,
             'learning_rate': 0.01,
@@ -142,8 +142,8 @@ def build_lgb_model(train, test):
                         valid_sets=[lgb_train, lgb_valid],
                         valid_names=['tarin', 'valid'],
                         num_boost_round=NUM_ROUND,
-                        verbose_eval=10,
-                        early_stopping_rounds=50)
+                        verbose_eval=1000,
+                        early_stopping_rounds=3000)
         oof[valid_idx] = clf.predict(train.iloc[valid_idx][features], num_iteration=clf.best_iteration)
         predictions += clf.predict(test[features], num_iteration=clf.best_iteration) / folds.n_splits
     oof_score = roc_auc_score(train[TARGET], oof)
@@ -163,8 +163,8 @@ def build_nn_model(train, test):
     model.add(Dense(1, activation='sigmoid'))
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[metric.auc_roc])
     model.fit(train[features], train[TARGET],
-              epochs=5,
-              batch_size=32,
+              epochs=10,
+              batch_size=64,
               validation_data=(valid[features], valid[TARGET]),
               verbose=1,
               class_weight='balanced',
@@ -188,6 +188,12 @@ def model_score(y_true, y_pred):
     print('classification report', class_report)
 
     return acc_score, class_report, auc_score
+
+
+def output_submit_csv(pred, score, index, filename):
+    df_test_pred = pd.Series(pred, index=index, name=TARGET)
+    str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
+    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'{filename}_{str_nowtime}_{round(score * 100, 2)}.csv', header=True)
 
 
 if __name__ == '__main__':
@@ -230,16 +236,16 @@ if __name__ == '__main__':
     print(nn_pred)
 
     #
-    # merge predict data
+    # merge predict data and score
     #
 
     ensemble_pred = (lgb_pred + nn_pred) / 2
+    ensemble_score = (lgb_score + nn_score) / 2
 
     #
     # test to predict and submit dataframe
     #
 
-    df_test_pred = pd.Series(ensemble_pred, index=df_test[ID], name=TARGET)
-    str_nowtime = datetime.now().strftime("%Y%m%d%H%M%S")
-    df_test_pred.to_csv(SUBMIT_DIR_PATH + f'submit_{str_nowtime}_{round(nn_score * 100, 2)}.csv',
-                        header=True)
+    output_submit_csv(lgb_pred, lgb_score, index=df_test[ID], filename='lgb')
+    output_submit_csv(nn_pred, nn_score, index=df_test[ID], filename='nn')
+    output_submit_csv(ensemble_pred, ensemble_score, index=df_test[ID], filename='ensemble')
