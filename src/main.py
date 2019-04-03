@@ -24,7 +24,7 @@ MODEL_DIR_PATH = '../model/'
 ID = 'ID_code'
 TARGET = 'target'
 dtypes = setting.DTYPES
-NUM_ROUND = 100000
+NUM_ROUND = 20000
 N_FOLD = 10
 
 
@@ -125,17 +125,18 @@ def build_lgb_model(train, test):
             'bagging_fraction': 0.4,
             'boost_from_average': 'false',
             'boost': 'gbdt',
-            'feature_fraction': 0.05,
+            'feature_fraction': 0.03,
             'learning_rate': 0.01,
-            'max_depth': -1,
+            'max_depth': 5,
             'metric': 'auc',
-            'min_data_in_leaf': 80,
+            'min_data_in_leaf': 100,
             'min_sum_hessian_in_leaf': 10.0,
             'num_leaves': 13,
             'num_threads': 8,
             'tree_learner': 'serial',
             'verbosity': 1,
-            'is_unbalance': True
+            'is_unbalance': True,
+            'seed': 0
         }
         clf = lgb.train(params=params,
                         train_set=lgb_train,
@@ -152,30 +153,37 @@ def build_lgb_model(train, test):
 
 # Keras
 def build_nn_model(train, test):
+    folds = StratifiedKFold(n_splits=N_FOLD, shuffle=False, random_state=0)
+    predictions = np.zeros(test.shape[0])
+    oof = np.zeros(train.shape[0])
     early_stopping = EarlyStopping(monitor='val_loss', patience=1, verbose=0, mode='auto')
-    train, valid = train_test_split(train, test_size=0.1)
     model = Sequential()
     model.add(Dense(1000, input_shape=(200, )))
     model.add(Activation("relu"))
-    model.add(Dropout(0.5))
-    model.add(Dense(64))
+    model.add(Dropout(0.2))
+    model.add(Dense(100))
     model.add(Activation("relu"))
     model.add(Dense(1, activation='sigmoid'))
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[metric.auc_roc])
-    model.fit(train[features], train[TARGET],
-              epochs=10,
-              batch_size=64,
-              validation_data=(valid[features], valid[TARGET]),
-              verbose=1,
-              class_weight='balanced',
-              callbacks=[early_stopping])
-    score = model.evaluate(valid[features], valid[TARGET], batch_size=64, verbose=0)
-    print('loss: ', score[0])
-    print('accuracy: ', score[1])
-    predict = model.predict(test[features])
+
+    for fold_idx, (train_idx, valid_idx) in enumerate(folds.split(train[features], train[TARGET])):
+        print('fold: ', fold_idx)
+        # train, valid = train_test_split(train, test_size=0.1)
+
+        model.fit(train.iloc[train_idx][features], train.iloc[train_idx][TARGET],
+                  epochs=10,
+                  batch_size=64,
+                  validation_data=(train.iloc[valid_idx][features], train.iloc[valid_idx][TARGET]),
+                  verbose=1,
+                  class_weight='balanced',
+                  callbacks=[early_stopping])
+        oof[valid_idx] = (model.predict(train.iloc[valid_idx][features], batch_size=64)).T[0]
+        predictions += (model.predict(test[features], batch_size=64) / folds.n_splits).T[0]
+        print(predictions)
+    oof_score = roc_auc_score(train[TARGET], oof)
 
     # because predict is (n, 1) shape
-    return predict.T[0], score[1]
+    return predictions, oof_score
 
 
 # return scores (Accuracy, ClassificationReport, AUC)
