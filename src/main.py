@@ -24,8 +24,8 @@ MODEL_DIR_PATH = '../model/'
 ID = 'ID_code'
 TARGET = 'target'
 dtypes = setting.DTYPES
-NUM_ROUND = 20000
-N_FOLD = 10
+NUM_ROUND = 10000
+N_FOLD = 5
 
 
 # return path exist (true or false)
@@ -54,28 +54,32 @@ def output_profile(df, filename):
 
 
 # smote oversampling train data
-def smote_sampling(X, y):
-    print(X.shape)
-    print(y.shape)
-    ds_values = y.value_counts()
-    print(ds_values)
+def smote_sampling(df):
+    print(df.shape)
+    print(df[TARGET].value_counts())
     # max_index = ds_values.idxmax()
     smote = SMOTE(sampling_strategy='auto', random_state=0, n_jobs=-1)
-    X_resample, y_resample = smote.fit_resample(X, y)
-    return X_resample, y_resample
+    np_x, np_y = smote.fit_sample(df[features], df[TARGET])
+    print(np_x.shape)
+    print(np_y.shape)
+    df_x = pd.DataFrame(np_x, columns=features)
+    df_y = pd.Series(np_y, name=TARGET)
+    df = pd.concat([df_x, df_y], axis=1)
+    print(df.shape)
+    return df
 
 
 # oversampling (label_0 * 2, label_1 * 3)
-def my_oversampling(data):
-    print(data.shape)
-    print(data[TARGET].value_counts())
-    positive_data = data[data[TARGET] == 1]
-    negative_data = data[data[TARGET] == 0]
-    data = pd.concat([data, positive_data.sample(frac=1)], axis=0)
-    data = pd.concat([data, positive_data.sample(frac=1)], axis=0)
-    data = pd.concat([data, negative_data.sample(frac=1)], axis=0)
-    print(data.shape)
-    return data
+def my_oversampling(df):
+    print(df.shape)
+    print(df[TARGET].value_counts())
+    positive_data = df[df[TARGET] == 1]
+    negative_data = df[df[TARGET] == 0]
+    df = pd.concat([df, positive_data.sample(frac=1)], axis=0)
+    df = pd.concat([df, positive_data.sample(frac=1)], axis=0)
+    df = pd.concat([df, negative_data.sample(frac=1)], axis=0)
+    print(df.shape)
+    return df
 
 
 # scaling data (numpy)
@@ -84,33 +88,11 @@ def scaling(data):
     return data
 
 
-# XGBoost
-def build_xgb_model(xgtrain):
-    xgb_clf = xgb.XGBClassifier(n_estimators=200,
-                                learning_rate=0.1,
-                                max_depth=5,
-                                min_child_weight=1,
-                                gamma=0,
-                                subsample=0.8,
-                                colsample_bytree=0.8,
-                                scale_pos_weight=1,
-                                objective='binary:logistic',
-                                # nthread=8,
-                                # silent=False
-                                )
-    xgb_param = xgb_clf.get_xgb_params()
-    print('Start cross validation')
-    cvresult = xgb.cv(xgb_param, xgtrain, num_boost_round=xgb_param['n_estimators'], nfold=5, metrics=['auc'],
-                      early_stopping_rounds=10, stratified=True, seed=0)
-    print('Best number of trees = {}'.format(cvresult.shape[0]))
-    xgb_clf.set_params(n_estimators=cvresult.shape[0])
-    return xgb_clf, cvresult.shape[0]
-
-
 # LightGBM and K-Fold
 # training model and plot predictions
-def build_lgb_model(train, test):
-    folds = StratifiedKFold(n_splits=N_FOLD, shuffle=False, random_state=0)
+def build_lgb_model(train, test, valid):
+    folds = StratifiedKFold(n_splits=N_FOLD, shuffle=True, random_state=0)
+    valid_pred = np.zeros(valid.shape[0])
     predictions = np.zeros(test.shape[0])
     oof = np.zeros(train.shape[0])
 
@@ -119,24 +101,21 @@ def build_lgb_model(train, test):
         lgb_train = lgb.Dataset(train.iloc[train_idx][features], label=train.iloc[train_idx][TARGET])
         lgb_valid = lgb.Dataset(train.iloc[valid_idx][features], label=train.iloc[valid_idx][TARGET], reference=lgb_train)
         params = {
-            'task': 'train',
-            'objective': 'binary',
             'bagging_freq': 5,
-            'bagging_fraction': 0.4,
+            'bagging_fraction': 0.335,
             'boost_from_average': 'false',
             'boost': 'gbdt',
-            'feature_fraction': 0.03,
-            'learning_rate': 0.01,
-            'max_depth': 5,
-            'metric': 'auc',
-            'min_data_in_leaf': 100,
+            'feature_fraction': 0.041,
+            'learning_rate': 0.0083,
+            'max_depth': -1,
+            'metric':'auc',
+            'min_data_in_leaf': 80,
             'min_sum_hessian_in_leaf': 10.0,
             'num_leaves': 13,
             'num_threads': 8,
             'tree_learner': 'serial',
-            'verbosity': 1,
-            'is_unbalance': True,
-            'seed': 0
+            'objective': 'binary',
+            'verbosity': -1
         }
         clf = lgb.train(params=params,
                         train_set=lgb_train,
@@ -144,16 +123,18 @@ def build_lgb_model(train, test):
                         valid_names=['tarin', 'valid'],
                         num_boost_round=NUM_ROUND,
                         verbose_eval=1000,
-                        early_stopping_rounds=3000)
+                        early_stopping_rounds=1000)
         oof[valid_idx] = clf.predict(train.iloc[valid_idx][features], num_iteration=clf.best_iteration)
         predictions += clf.predict(test[features], num_iteration=clf.best_iteration) / folds.n_splits
+        valid_pred += clf.predict(valid[features], num_iteration=clf.best_iteration) / folds.n_splits
     oof_score = roc_auc_score(train[TARGET], oof)
+    print("Valid Score: ", roc_auc_score(valid[TARGET], valid_pred))
     return predictions, oof_score
 
 
 # Keras
-def build_nn_model(train, test):
-    folds = StratifiedKFold(n_splits=N_FOLD, shuffle=False, random_state=0)
+def build_nn_model(train, test, valid):
+    folds = StratifiedKFold(n_splits=N_FOLD, shuffle=True, random_state=0)
     predictions = np.zeros(test.shape[0])
     oof = np.zeros(train.shape[0])
     early_stopping = EarlyStopping(monitor='val_loss', patience=1, verbose=0, mode='auto')
@@ -171,14 +152,14 @@ def build_nn_model(train, test):
         # train, valid = train_test_split(train, test_size=0.1)
 
         model.fit(train.iloc[train_idx][features], train.iloc[train_idx][TARGET],
-                  epochs=10,
-                  batch_size=64,
+                  epochs=5,
+                  batch_size=32,
                   validation_data=(train.iloc[valid_idx][features], train.iloc[valid_idx][TARGET]),
                   verbose=1,
                   class_weight='balanced',
                   callbacks=[early_stopping])
         oof[valid_idx] = (model.predict(train.iloc[valid_idx][features], batch_size=64)).T[0]
-        predictions += (model.predict(test[features], batch_size=64) / folds.n_splits).T[0]
+        predictions += (model.predict(test[features], batch_size=32) / folds.n_splits).T[0]
         print(predictions)
     oof_score = roc_auc_score(train[TARGET], oof)
 
@@ -212,8 +193,8 @@ if __name__ == '__main__':
     with multiprocessing.Pool() as pool:
         df_train, df_test = pool.map(load_file, ["train", "test"])
 
-    # df_train = df_train.sample(2000)
-    # df_test = df_test.sample(2000)
+    # df_train = df_train.sample(frac=0.1)
+    # df_test = df_test.sample(frac=0.1)
     print(df_train.info())
     print(df_test.info())
 
@@ -229,31 +210,36 @@ if __name__ == '__main__':
     #
 
     df_train = my_oversampling(df_train)
-    # df_train[features], df_train[TARGET] = smote_sampling(df_train[features], df_train[TARGET])
+    df_train = smote_sampling(df_train)
 
     df_train[features] = scaling(df_train[features])
     df_test[features] = scaling(df_test[features])
+
+    output_profile(df_train, 'train_preprocessing.html')
+    output_profile(df_test, 'test_preprocessing.html')
+
+    df_train, df_valid = train_test_split(df_train, test_size=0.4, random_state=0, shuffle=True)
 
     #
     # training model and save
     #
 
-    lgb_pred, lgb_score = build_lgb_model(df_train, df_test)
+    lgb_pred, lgb_score = build_lgb_model(df_train, df_test, df_valid)
     print(lgb_pred)
-    nn_pred, nn_score = build_nn_model(df_train, df_test)
-    print(nn_pred)
+    # nn_pred, nn_score = build_nn_model(df_train, df_test, df_valid)
+    # print(nn_pred)
 
     #
     # merge predict data and score
     #
 
-    ensemble_pred = (lgb_pred + nn_pred) / 2
-    ensemble_score = (lgb_score + nn_score) / 2
+    # ensemble_pred = (lgb_pred + nn_pred) / 2
+    # ensemble_score = (lgb_score + nn_score) / 2
 
     #
     # test to predict and submit dataframe
     #
 
     output_submit_csv(lgb_pred, lgb_score, index=df_test[ID], filename='lgb')
-    output_submit_csv(nn_pred, nn_score, index=df_test[ID], filename='nn')
-    output_submit_csv(ensemble_pred, ensemble_score, index=df_test[ID], filename='ensemble')
+    # output_submit_csv(nn_pred, nn_score, index=df_test[ID], filename='nn')
+    # output_submit_csv(ensemble_pred, ensemble_score, index=df_test[ID], filename='ensemble')
