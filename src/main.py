@@ -24,7 +24,7 @@ MODEL_DIR_PATH = '../model/'
 ID = 'ID_code'
 TARGET = 'target'
 dtypes = setting.DTYPES
-NUM_ROUND = 10000
+NUM_ROUND = 100000
 N_FOLD = 5
 
 
@@ -98,32 +98,38 @@ def build_lgb_model(train, test, valid):
 
     for fold_idx, (train_idx, valid_idx) in enumerate(folds.split(train[features], train[TARGET])):
         print('fold: ', fold_idx)
-        lgb_train = lgb.Dataset(train.iloc[train_idx][features], label=train.iloc[train_idx][TARGET])
-        lgb_valid = lgb.Dataset(train.iloc[valid_idx][features], label=train.iloc[valid_idx][TARGET], reference=lgb_train)
+
+        sampling_train = my_oversampling(train.iloc[train_idx])
+        lgb_train = lgb.Dataset(sampling_train[features], label=sampling_train[TARGET])
+        lgb_valid = lgb.Dataset(train.iloc[valid_idx][features], label=train.iloc[valid_idx][TARGET],
+                                reference=lgb_train)
         params = {
-            'bagging_freq': 5,
-            'bagging_fraction': 0.335,
-            'boost_from_average': 'false',
-            'boost': 'gbdt',
-            'feature_fraction': 0.041,
-            'learning_rate': 0.0083,
-            'max_depth': -1,
-            'metric':'auc',
-            'min_data_in_leaf': 80,
-            'min_sum_hessian_in_leaf': 10.0,
-            'num_leaves': 13,
-            'num_threads': 8,
-            'tree_learner': 'serial',
-            'objective': 'binary',
-            'verbosity': -1
+            "objective": "binary",
+            "metric": "auc",
+            "boosting": 'gbdt',
+            "max_depth": -1,
+            "num_leaves": 13,
+            "learning_rate": 0.005,
+            "bagging_freq": 5,
+            "bagging_fraction": 0.4,
+            "feature_fraction": 0.05,
+            "min_data_in_leaf": 80,
+            "min_sum_heassian_in_leaf": 10,
+            "tree_learner": "serial",
+            "boost_from_average": "false",
+            # "lambda_l1" : 5,
+            # "lambda_l2" : 5,
+            "bagging_seed": 0,
+            "verbosity": 1,
+            "seed": 0
         }
         clf = lgb.train(params=params,
                         train_set=lgb_train,
                         valid_sets=[lgb_train, lgb_valid],
                         valid_names=['tarin', 'valid'],
                         num_boost_round=NUM_ROUND,
-                        verbose_eval=1000,
-                        early_stopping_rounds=1000)
+                        verbose_eval=5000,
+                        early_stopping_rounds=3000)
         oof[valid_idx] = clf.predict(train.iloc[valid_idx][features], num_iteration=clf.best_iteration)
         predictions += clf.predict(test[features], num_iteration=clf.best_iteration) / folds.n_splits
         valid_pred += clf.predict(valid[features], num_iteration=clf.best_iteration) / folds.n_splits
@@ -137,34 +143,67 @@ def build_nn_model(train, test, valid):
     folds = StratifiedKFold(n_splits=N_FOLD, shuffle=True, random_state=0)
     predictions = np.zeros(test.shape[0])
     oof = np.zeros(train.shape[0])
+    valid_pred = np.zeros(valid.shape[0])
+
     early_stopping = EarlyStopping(monitor='val_loss', patience=1, verbose=0, mode='auto')
     model = Sequential()
-    model.add(Dense(1000, input_shape=(200, )))
+    model.add(Dense(1000, input_shape=(200,)))
     model.add(Activation("relu"))
-    model.add(Dropout(0.2))
-    model.add(Dense(100))
-    model.add(Activation("relu"))
+    for i in range(5):
+        model.add(Dense(100))
+        model.add(Activation("relu"))
+        model.add(Dropout(0.2))
     model.add(Dense(1, activation='sigmoid'))
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[metric.auc_roc])
 
     for fold_idx, (train_idx, valid_idx) in enumerate(folds.split(train[features], train[TARGET])):
         print('fold: ', fold_idx)
         # train, valid = train_test_split(train, test_size=0.1)
-
-        model.fit(train.iloc[train_idx][features], train.iloc[train_idx][TARGET],
+        sampling_train = my_oversampling(train.iloc[train_idx])
+        model.fit(sampling_train[features], sampling_train[TARGET],
                   epochs=5,
                   batch_size=32,
-                  validation_data=(train.iloc[valid_idx][features], train.iloc[valid_idx][TARGET]),
+                  validation_data=(sampling_train[features], train.iloc[valid_idx][TARGET]),
                   verbose=1,
                   class_weight='balanced',
                   callbacks=[early_stopping])
         oof[valid_idx] = (model.predict(train.iloc[valid_idx][features], batch_size=64)).T[0]
         predictions += (model.predict(test[features], batch_size=32) / folds.n_splits).T[0]
-        print(predictions)
+        valid_pred += (model.predict(valid[features], batch_size=32) / folds.n_splits).T[0]
     oof_score = roc_auc_score(train[TARGET], oof)
+    print("Valid Score: ", roc_auc_score(valid[TARGET], valid_pred))
 
     # because predict is (n, 1) shape
     return predictions, oof_score
+
+
+def augment(x,y,t=2):
+    xs,xn = [],[]
+    for i in range(t):
+        mask = y>0
+        x1 = x[mask].copy()
+        ids = np.arange(x1.shape[0])
+        for c in range(x1.shape[1]):
+            np.random.shuffle(ids)
+            x1[:,c] = x1[ids][:,c]
+        xs.append(x1)
+
+    for i in range(t//2):
+        mask = y==0
+        x1 = x[mask].copy()
+        ids = np.arange(x1.shape[0])
+        for c in range(x1.shape[1]):
+            np.random.shuffle(ids)
+            x1[:,c] = x1[ids][:,c]
+        xn.append(x1)
+
+    xs = np.vstack(xs)
+    xn = np.vstack(xn)
+    ys = np.ones(xs.shape[0])
+    yn = np.zeros(xn.shape[0])
+    x = np.vstack([x,xs,xn])
+    y = np.concatenate([y,ys,yn])
+    return x,y
 
 
 # return scores (Accuracy, ClassificationReport, AUC)
@@ -209,8 +248,8 @@ if __name__ == '__main__':
     # pre processing (oversampling and scaling)
     #
 
-    df_train = my_oversampling(df_train)
-    df_train = smote_sampling(df_train)
+    # df_train = my_oversampling(df_train)
+    # df_train = smote_sampling(df_train)
 
     df_train[features] = scaling(df_train[features])
     df_test[features] = scaling(df_test[features])
@@ -226,20 +265,20 @@ if __name__ == '__main__':
 
     lgb_pred, lgb_score = build_lgb_model(df_train, df_test, df_valid)
     print(lgb_pred)
-    # nn_pred, nn_score = build_nn_model(df_train, df_test, df_valid)
-    # print(nn_pred)
+    nn_pred, nn_score = build_nn_model(df_train, df_test, df_valid)
+    print(nn_pred)
 
     #
     # merge predict data and score
     #
 
-    # ensemble_pred = (lgb_pred + nn_pred) / 2
-    # ensemble_score = (lgb_score + nn_score) / 2
+    ensemble_pred = (lgb_pred + nn_pred) / 2
+    ensemble_score = (lgb_score + nn_score) / 2
 
     #
     # test to predict and submit dataframe
     #
 
     output_submit_csv(lgb_pred, lgb_score, index=df_test[ID], filename='lgb')
-    # output_submit_csv(nn_pred, nn_score, index=df_test[ID], filename='nn')
-    # output_submit_csv(ensemble_pred, ensemble_score, index=df_test[ID], filename='ensemble')
+    output_submit_csv(nn_pred, nn_score, index=df_test[ID], filename='nn')
+    output_submit_csv(ensemble_pred, ensemble_score, index=df_test[ID], filename='ensemble')
